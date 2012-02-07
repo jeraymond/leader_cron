@@ -4,13 +4,13 @@ DEPS=$(wildcard deps/*/ebin)
 
 .PHONY: doc
 
-all:
+all: get-deps
 	$(REBAR) compile
 
 clean: clean-doc
 	$(REBAR) clean
 
-deps:
+get-deps:
 	$(REBAR) get-deps
 
 check:
