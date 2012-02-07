@@ -2,6 +2,41 @@
 %%% @author Jeremy Raymond <jeraymond@gmail.com>
 %%% @copyright (C) 2012, Jeremy Raymond
 %%% @doc
+%%% Similar to Unix cron the leader_cron_task module schedules a periodic
+%%% task to be executed repeatedly in the future. The schedule is defined
+%%% by five fields
+%%%
+%%% <pre>
+%%% Field         Valid Range
+%%% minute        0 - 59
+%%% hour          0 - 23
+%%% day of month  1 - 31
+%%% month         1 - 12
+%%% day of week   0 - 6 (Sunday is 0) </pre>
+%%%
+%%% The schedule is defined by the cron tuple
+%%%
+%%% <code>{cron, {Minute, Hour, DayOfMonth, Month, DayOfWeek}}</code>
+%%%
+%%% The semantics of these fields align with Unix cron. Each field
+%%% specifies which values in the range are valid for task execution. The
+%%% values can be given as a range, a list or the atom 'all'.
+%%%
+%%% <pre>
+%%% Field Spec                     Example            Unix Cron
+%%% all                            all                *
+%%% {range, integer(), integer()}  {range, 1, 5}      1-5
+%%% {list, [integer()]}            {list, [1, 3, 7]}  1,3,7</pre>
+%%%
+%%% If the day of month is set to a day which does not exist in the current
+%%% month (such as 31 for February) the day is skipped. Setting day of month
+%%% to 31 does _not_ mean the last day of the month. This aligns with Unix
+%%% cron.
+%%%
+%%% Specified dates and times are all handled in UTC.
+%%%
+%%% When a task takes longer than the time to the next valid period (or
+%%% periods) the overlapped periods are skipped.
 %%%
 %%% @end
 %%% Created :  1 Feb 2012 by Jeremy Raymond <jeraymond@gmail.com>
@@ -11,7 +46,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/4]).
+-export([start_link/2, status/1, stop/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -20,15 +55,33 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {schedule,
-		module,
-		function,
-		args,
-		task_pid
+		mfa,
+		task_pid,
+		status,
+		next
 	       }).
 
 -define(DAY_IN_SECONDS, 86400).
 -define(HOUR_IN_SECONDS, 3600).
 -define(MINUTE_IN_SECONDS, 60).
+
+-type cron() :: {cron, {[cronspec()], [cronspec()], [cronspec()], [cronspec()],
+			[cronspec()]}}.
+%% The cron schedule {cron, {Minute, Hour, DayOfMonth, Month, DayOfWeek}}
+-type cronspec() :: all | rangespec() | listspec().
+-type rangespec() :: {range, integer(), integer()}.
+-type listspec() :: {list, [integer()]}.
+-type status() :: waiting | running.
+
+-type year() :: non_neg_integer().
+-type month() :: 1..12.
+-type day() :: 1..31.
+-type hour() :: 0..23.
+-type minute() :: 0..59.
+-type second() :: 0..59.
+-type date() :: {year(),month(),day()}.
+-type time() :: {hour(),minute(),second()}.
+-type datetime() :: {date(),time()}.
 
 %%%===================================================================
 %%% API
@@ -36,13 +89,39 @@
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Starts the server
+%% Creates a linked process which schedules the function in the
+%% specified module with the given arguments to be run according
+%% to the given cron() schedule.
 %%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(Schedule, M, F, A) ->
-    gen_server:start_link(?MODULE, [{Schedule, M, F, A}], []).
+-spec start_link(cron(), {module(), function(), [term()]}) ->
+			{ok, pid()} | ignore | {error, term()}.
+start_link(Schedule, Mfa) ->
+    gen_server:start_link(?MODULE, [{Schedule, Mfa}], []).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets the current status of the task and the trigger time. If running
+%% the trigger time denotes the time the task started. If waiting the
+%% time denotes the next time the task will run.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec status(pid()) -> {status(), datetime()}.
+status(Pid) ->
+    gen_server:call(Pid, status).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Stops the task. Tasks cannot be restarted. To restart create a
+%% new task.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec stop(pid()) -> ok.
+stop(Pid) ->
+    gen_server:cast(Pid, stop).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -59,12 +138,11 @@ start_link(Schedule, M, F, A) ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([{Schedule, M, F, A}]) ->
-    Pid = spawn_link(fun() -> run_task(Schedule, M, F, A) end),
+init([{Schedule, {M, F, A}}]) ->
+    Self = self(),
+    Pid = spawn_link(fun() -> run_task(Schedule, {M, F, A}, Self) end),
     {ok, #state{schedule = Schedule,
-		module = M,
-		function = F,
-		args = A,
+		mfa = {M, F, A},
 		task_pid = Pid}}.
 
 %%--------------------------------------------------------------------
@@ -81,9 +159,10 @@ init([{Schedule, M, F, A}]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+handle_call(status, _From, State) ->
+    Status = State#state.status,
+    Next = State#state.next,
+    {reply, {Status, Next}, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -95,8 +174,12 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+handle_cast({waiting, NextValidDateTime}, State) ->
+    {noreply, State#state{status = waiting, next = NextValidDateTime}};
+handle_cast({running, NextValidDateTime}, State) ->
+    {noreply, State#state{status = running, next = NextValidDateTime}};
+handle_cast(stop, State) ->
+    {stop, normal, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -139,28 +222,34 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-run_task(Schedule, M, F, A) ->
-    CurrentDateTime = calendar:universal_time(),
-    NextValidDateTime = next_valid_datetime(Schedule,
-					    CurrentDateTime),
-    SleepFor = time_to_wait_millis(CurrentDateTime,
-				   NextValidDateTime),
-    timer:sleep(SleepFor),
-    apply(M, F, A),
-    run_task(Schedule, M, F, A).
 
+-spec run_task(cron(), {module(), atom(), [term()]}, pid()) -> no_return().
+run_task(Schedule, Mfa, ParentPid) ->
+    {M, F, A} = Mfa,
+    CurrentDateTime = calendar:universal_time(),
+    NextValidDateTime = next_valid_datetime(Schedule, CurrentDateTime),
+    SleepFor = time_to_wait_millis(CurrentDateTime, NextValidDateTime),
+    gen_server:cast(ParentPid, {waiting, NextValidDateTime}),
+    timer:sleep(SleepFor),
+    gen_server:cast(ParentPid, {running, NextValidDateTime}),
+    apply(M, F, A),
+    run_task(Schedule, Mfa, ParentPid).
+
+-spec time_to_wait_millis(datetime(), datetime()) -> integer().
 time_to_wait_millis(CurrentDateTime, NextDateTime) ->
     CurrentSeconds = calendar:datetime_to_gregorian_seconds(CurrentDateTime),
     NextSeconds = calendar:datetime_to_gregorian_seconds(NextDateTime),
     SecondsToSleep = NextSeconds - CurrentSeconds,
     SecondsToSleep * 1000.
 
+-spec next_valid_datetime(cron(), datetime()) -> datetime().
 next_valid_datetime({cron, Schedule}, DateTime) ->
     DateTime1 = advance_seconds(DateTime, ?MINUTE_IN_SECONDS),
     {{Y, Mo, D}, {H, M, _}} = DateTime1,
     DateTime2 = {{Y, Mo, D}, {H, M, 0}},
     next_valid_datetime(not_done, {cron, Schedule}, DateTime2).
 
+-spec next_valid_datetime(done|not_done, cron(), datetime()) -> datetime().
 next_valid_datetime(done, _, DateTime) ->
     DateTime;
 next_valid_datetime(not_done, {cron, Schedule}, DateTime) ->
@@ -214,6 +303,7 @@ next_valid_datetime(not_done, {cron, Schedule}, DateTime) ->
 	end,
     next_valid_datetime(Done, {cron, Schedule}, Time).
 
+-spec value_valid(cronspec(), integer(), integer(), integer()) -> true | false.
 value_valid(Spec, Min, Max, Value) when Value >= Min, Value =< Max->
     case Spec of
 	all ->
@@ -225,12 +315,18 @@ value_valid(Spec, Min, Max, Value) when Value >= Min, Value =< Max->
 		      end, ValidValues)
     end.
 
+-spec advance_seconds(datetime(), integer()) -> datetime().
 advance_seconds(DateTime, Seconds) ->
     Seconds1 = calendar:datetime_to_gregorian_seconds(DateTime) + Seconds,
     calendar:gregorian_seconds_to_datetime(Seconds1).
 
+-spec extract_integers([rangespec()|listspec()], integer(), integer()) ->
+			      [integer()].
 extract_integers(Spec, Min, Max) when Min < Max ->
     extract_integers(Spec, Min, Max, []).
+
+-spec extract_integers([rangespec()|listspec()], integer(), integer(),
+		       list()) -> [integer()].
 extract_integers([], Min, Max, Acc) ->
     Integers = lists:sort(sets:to_list(sets:from_list(lists:flatten(Acc)))),
     lists:foreach(fun(Int) ->

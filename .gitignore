@@ -4,3 +4,4 @@ deps
 ebin
 .eunit
 .leader_cron_plt
+doc

@@ -2,10 +2,12 @@ REBAR=./rebar
 PLT=.leader_cron_plt
 DEPS=$(wildcard deps/*/ebin)
 
+.PHONY: doc
+
 all:
 	$(REBAR) compile
 
-clean:
+clean: clean-doc
 	$(REBAR) clean
 
 deps:
@@ -20,3 +22,9 @@ dialyzer: clean all
 build_plt: all
 	dialyzer --build_plt --output_plt $(PLT) \
 		--apps erts kernel stdlib $(DEPS)
+
+doc:
+	$(REBAR) doc
+
+clean-doc:
+	rm -rf doc
