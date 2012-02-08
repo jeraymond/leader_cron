@@ -357,7 +357,37 @@ extract_integers(Spec, Min, Max, Acc) ->
 %%%===================================================================
 
 -ifdef(TEST).
+-compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
+
+nominal_workflow_test_() ->
+    {timeout, 90,
+     fun() ->
+	     io:format(user, "This test can take up to 90 seconds\n", []),
+	     Schedule = {cron, {all, all, all, all, all}},
+	     {ok, Pid} = leader_cron_task:start_link(
+			   Schedule,
+			   {timer, sleep, [5000]}),
+	     Current = calendar:universal_time(),
+	     Next = next_valid_datetime(Schedule, Current),
+	     WaitFor = time_to_wait_millis(Current, Next),
+	     ?assertEqual({waiting, Next}, leader_cron_task:status(Pid)),
+	     timer:sleep(WaitFor + 2000),
+	     ?assertEqual({running, Next}, leader_cron_task:status(Pid)),
+	     timer:sleep(4000),
+	     Next1 = next_valid_datetime(Schedule, Next),
+	     ?assertEqual({waiting, Next1}, leader_cron_task:status(Pid)),
+	     ?assertEqual(ok, leader_cron_task:stop(Pid)),
+	     ?assertException(exit,
+			      {normal,{gen_server,call,[Pid, status]}},
+			      leader_cron_task:status(Pid))
+     end}.
+
+invalid_range_test() ->
+    ?assertException(throw, {error, {out_of_range, {min, 2}, {value, 1}}},
+		     extract_integers([], 2, 10, [1])),
+    ?assertException(throw, {error, {out_of_range, {max, 2}, {value, 3}}},
+		     extract_integers([], 1, 2, [3])).
 
 extract_integers_test() ->
     ?assertException(error, function_clause, extract_integers([], 5, 4)),
