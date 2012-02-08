@@ -52,6 +52,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
+-export_type([cron/0]).
+
 -define(SERVER, ?MODULE).
 
 -record(state, {schedule,
@@ -72,16 +74,6 @@
 -type rangespec() :: {range, integer(), integer()}.
 -type listspec() :: {list, [integer()]}.
 -type status() :: waiting | running.
-
--type year() :: non_neg_integer().
--type month() :: 1..12.
--type day() :: 1..31.
--type hour() :: 0..23.
--type minute() :: 0..59.
--type second() :: 0..59.
--type date() :: {year(),month(),day()}.
--type time() :: {hour(),minute(),second()}.
--type datetime() :: {date(),time()}.
 
 %%%===================================================================
 %%% API
@@ -108,7 +100,7 @@ start_link(Schedule, Mfa) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec status(pid()) -> {status(), datetime()}.
+-spec status(pid()) -> {status(), calendar:datetime()}.
 status(Pid) ->
     gen_server:call(Pid, status).
 
@@ -235,21 +227,23 @@ run_task(Schedule, Mfa, ParentPid) ->
     apply(M, F, A),
     run_task(Schedule, Mfa, ParentPid).
 
--spec time_to_wait_millis(datetime(), datetime()) -> integer().
+-spec time_to_wait_millis(calendar:datetime(), calendar:datetime()) ->
+				 integer().
 time_to_wait_millis(CurrentDateTime, NextDateTime) ->
     CurrentSeconds = calendar:datetime_to_gregorian_seconds(CurrentDateTime),
     NextSeconds = calendar:datetime_to_gregorian_seconds(NextDateTime),
     SecondsToSleep = NextSeconds - CurrentSeconds,
     SecondsToSleep * 1000.
 
--spec next_valid_datetime(cron(), datetime()) -> datetime().
+-spec next_valid_datetime(cron(), calendar:datetime()) -> calendar:datetime().
 next_valid_datetime({cron, Schedule}, DateTime) ->
     DateTime1 = advance_seconds(DateTime, ?MINUTE_IN_SECONDS),
     {{Y, Mo, D}, {H, M, _}} = DateTime1,
     DateTime2 = {{Y, Mo, D}, {H, M, 0}},
     next_valid_datetime(not_done, {cron, Schedule}, DateTime2).
 
--spec next_valid_datetime(done|not_done, cron(), datetime()) -> datetime().
+-spec next_valid_datetime(done|not_done, cron(), calendar:datetime()) ->
+				 calendar:datetime().
 next_valid_datetime(done, _, DateTime) ->
     DateTime;
 next_valid_datetime(not_done, {cron, Schedule}, DateTime) ->
@@ -315,7 +309,7 @@ value_valid(Spec, Min, Max, Value) when Value >= Min, Value =< Max->
 		      end, ValidValues)
     end.
 
--spec advance_seconds(datetime(), integer()) -> datetime().
+-spec advance_seconds(calendar:datetime(), integer()) -> calendar:datetime().
 advance_seconds(DateTime, Seconds) ->
     Seconds1 = calendar:datetime_to_gregorian_seconds(DateTime) + Seconds,
     calendar:gregorian_seconds_to_datetime(Seconds1).
