@@ -41,6 +41,7 @@
 %%% @end
 %%% Created :  1 Feb 2012 by Jeremy Raymond <jeraymond@gmail.com>
 %%%-------------------------------------------------------------------
+
 -module(leader_cron_task).
 
 -behaviour(gen_server).
@@ -52,7 +53,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--export_type([cron/0]).
+-export_type([cron/0, mfargs/0]).
 
 -define(SERVER, ?MODULE).
 
@@ -67,13 +68,17 @@
 -define(HOUR_IN_SECONDS, 3600).
 -define(MINUTE_IN_SECONDS, 60).
 
--type cron() :: {cron, {[cronspec()], [cronspec()], [cronspec()], [cronspec()],
-			[cronspec()]}}.
-%% The cron schedule {cron, {Minute, Hour, DayOfMonth, Month, DayOfWeek}}
--type cronspec() :: all | rangespec() | listspec().
--type rangespec() :: {range, integer(), integer()}.
--type listspec() :: {list, [integer()]}.
+-type cron() :: {cron, {Minute :: cronspec(),
+			Hour :: cronspec(),
+			DayOfMonth :: cronspec(),
+			Month :: cronspec(),
+			DayOfWeek :: cronspec()}}.
+-type cronspec() :: all | [rangespec() | listspec()].
+-type rangespec() :: {range, Min :: integer(), Max :: integer()}.
+-type listspec() :: {list, Values :: [integer()]}.
 -type status() :: waiting | running.
+-type mfargs() :: {Module :: atom(), Function :: atom(), Args :: [term()]}.
+-type datetime() :: calendar:datetime().
 
 %%%===================================================================
 %%% API
@@ -83,12 +88,16 @@
 %% @doc
 %% Creates a linked process which schedules the function in the
 %% specified module with the given arguments to be run according
-%% to the given cron() schedule.
+%% to the given schedule.
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec start_link(cron(), {module(), function(), [term()]}) ->
-			{ok, pid()} | ignore | {error, term()}.
+
+-spec start_link(Schedule, Mfa) -> {ok, pid()} | {error, Reason} when
+      Schedule :: cron(),
+      Mfa :: mfargs(),
+      Reason :: term().
+
 start_link(Schedule, Mfa) ->
     gen_server:start_link(?MODULE, [{Schedule, Mfa}], []).
 
@@ -100,18 +109,23 @@ start_link(Schedule, Mfa) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec status(pid()) -> {status(), calendar:datetime()}.
+
+-spec status(pid()) -> {Status, ScheduleTime} when
+      Status :: status(),
+      ScheduleTime :: datetime().
+
 status(Pid) ->
     gen_server:call(Pid, status).
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Stops the task. Tasks cannot be restarted. To restart create a
-%% new task.
+%% Stops the task.
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec stop(pid()) -> ok.
+
 stop(Pid) ->
     gen_server:cast(Pid, stop).
 
@@ -124,17 +138,16 @@ stop(Pid) ->
 %% @doc
 %% Initializes the server
 %%
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([{Schedule, {M, F, A}}]) ->
+
+-spec init([{cron(), mfargs()}]) -> {ok, #state{}}.
+
+init([{Schedule, Mfa}]) ->
     Self = self(),
-    Pid = spawn_link(fun() -> run_task(Schedule, {M, F, A}, Self) end),
+    Pid = spawn_link(fun() -> run_task(Schedule, Mfa, Self) end),
     {ok, #state{schedule = Schedule,
-		mfa = {M, F, A},
+		mfa = Mfa,
 		task_pid = Pid}}.
 
 %%--------------------------------------------------------------------
@@ -151,6 +164,7 @@ init([{Schedule, {M, F, A}}]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+
 handle_call(status, _From, State) ->
     Status = State#state.status,
     Next = State#state.next,
@@ -166,6 +180,7 @@ handle_call(status, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+
 handle_cast({waiting, NextValidDateTime}, State) ->
     {noreply, State#state{status = waiting, next = NextValidDateTime}};
 handle_cast({running, NextValidDateTime}, State) ->
@@ -183,6 +198,7 @@ handle_cast(stop, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -197,6 +213,7 @@ handle_info(_Info, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
+
 terminate(_Reason, _State) ->
     ok.
 
@@ -208,6 +225,7 @@ terminate(_Reason, _State) ->
 %% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @end
 %%--------------------------------------------------------------------
+
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -215,7 +233,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
--spec run_task(cron(), {module(), atom(), [term()]}, pid()) -> no_return().
+-spec run_task(cron(), mfargs(), pid()) -> no_return().
+
 run_task(Schedule, Mfa, ParentPid) ->
     {M, F, A} = Mfa,
     CurrentDateTime = calendar:universal_time(),
@@ -227,23 +246,24 @@ run_task(Schedule, Mfa, ParentPid) ->
     apply(M, F, A),
     run_task(Schedule, Mfa, ParentPid).
 
--spec time_to_wait_millis(calendar:datetime(), calendar:datetime()) ->
-				 integer().
+-spec time_to_wait_millis(datetime(), datetime()) -> integer().
+
 time_to_wait_millis(CurrentDateTime, NextDateTime) ->
     CurrentSeconds = calendar:datetime_to_gregorian_seconds(CurrentDateTime),
     NextSeconds = calendar:datetime_to_gregorian_seconds(NextDateTime),
     SecondsToSleep = NextSeconds - CurrentSeconds,
     SecondsToSleep * 1000.
 
--spec next_valid_datetime(cron(), calendar:datetime()) -> calendar:datetime().
+-spec next_valid_datetime(cron(), datetime()) -> datetime().
+
 next_valid_datetime({cron, Schedule}, DateTime) ->
     DateTime1 = advance_seconds(DateTime, ?MINUTE_IN_SECONDS),
     {{Y, Mo, D}, {H, M, _}} = DateTime1,
     DateTime2 = {{Y, Mo, D}, {H, M, 0}},
     next_valid_datetime(not_done, {cron, Schedule}, DateTime2).
 
--spec next_valid_datetime(done|not_done, cron(), calendar:datetime()) ->
-				 calendar:datetime().
+-spec next_valid_datetime(done|not_done, cron(), datetime()) -> datetime().
+
 next_valid_datetime(done, _, DateTime) ->
     DateTime;
 next_valid_datetime(not_done, {cron, Schedule}, DateTime) ->
@@ -298,6 +318,7 @@ next_valid_datetime(not_done, {cron, Schedule}, DateTime) ->
     next_valid_datetime(Done, {cron, Schedule}, Time).
 
 -spec value_valid(cronspec(), integer(), integer(), integer()) -> true | false.
+
 value_valid(Spec, Min, Max, Value) when Value >= Min, Value =< Max->
     case Spec of
 	all ->
@@ -309,18 +330,25 @@ value_valid(Spec, Min, Max, Value) when Value >= Min, Value =< Max->
 		      end, ValidValues)
     end.
 
--spec advance_seconds(calendar:datetime(), integer()) -> calendar:datetime().
+-spec advance_seconds(datetime(), integer()) -> datetime().
+
 advance_seconds(DateTime, Seconds) ->
     Seconds1 = calendar:datetime_to_gregorian_seconds(DateTime) + Seconds,
     calendar:gregorian_seconds_to_datetime(Seconds1).
 
 -spec extract_integers([rangespec()|listspec()], integer(), integer()) ->
 			      [integer()].
+
 extract_integers(Spec, Min, Max) when Min < Max ->
     extract_integers(Spec, Min, Max, []).
 
--spec extract_integers([rangespec()|listspec()], integer(), integer(),
-		       list()) -> [integer()].
+-spec extract_integers(Spec, Min, Max, Acc) -> Integers when
+      Spec :: [rangespec()|listspec()],
+      Min :: integer(),
+      Max :: integer(),
+      Acc :: list(),
+      Integers :: [integer()].
+
 extract_integers([], Min, Max, Acc) ->
     Integers = lists:sort(sets:to_list(sets:from_list(lists:flatten(Acc)))),
     lists:foreach(fun(Int) ->
@@ -351,7 +379,9 @@ extract_integers(Spec, Min, Max, Acc) ->
 %%%===================================================================
 
 -ifdef(TEST).
+
 -compile(export_all).
+
 -include_lib("eunit/include/eunit.hrl").
 
 nominal_workflow_test_() ->
