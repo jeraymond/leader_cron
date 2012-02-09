@@ -34,7 +34,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
-    case leader_cron_sup:start_link() of
+    case leader_cron_sup:start_link([node()|nodes()]) of
 	{ok, Pid} ->
 	    {ok, Pid};
 	Error ->
