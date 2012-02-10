@@ -2,8 +2,15 @@
 %%% @author Jeremy Raymond <jeraymond@gmail.com>
 %%% @copyright (C) 2012, Jeremy Raymond
 %%% @doc
-%%% Similar to Unix cron the leader_cron_task module schedules a periodic
-%%% task to be executed repeatedly in the future. The schedule is defined
+%%%
+%%% The leader_cron_task module provides different methods for scheduling
+%%% a task to be executed periodically in the future. The supported methods
+%%% are sleeper mode and cron mode.
+%%%
+%%% A sleeper mode schedule repeatedly executes a task then sleeps for a
+%%% specified number of milliseconds before repeating the task.
+%%%
+%%% A cron mode schedule acts similarly to Unix cron. The schedule is defined
 %%% by five fields
 %%%
 %%% <pre>
@@ -53,7 +60,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--export_type([cron/0, mfargs/0]).
+-export_type([sleeper/0, cron/0, mfargs/0, datetime/0, status/0]).
 
 -define(SERVER, ?MODULE).
 
@@ -68,6 +75,7 @@
 -define(HOUR_IN_SECONDS, 3600).
 -define(MINUTE_IN_SECONDS, 60).
 
+-type sleeper() :: {sleeper, Milliseconds::pos_integer()}.
 -type cron() :: {cron, {Minute :: cronspec(),
 			Hour :: cronspec(),
 			DayOfMonth :: cronspec(),
@@ -94,7 +102,7 @@
 %%--------------------------------------------------------------------
 
 -spec start_link(Schedule, Mfa) -> {ok, pid()} | {error, Reason} when
-      Schedule :: cron(),
+      Schedule :: sleeper() | cron(),
       Mfa :: mfargs(),
       Reason :: term().
 
@@ -110,9 +118,10 @@ start_link(Schedule, Mfa) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec status(pid()) -> {Status, ScheduleTime} when
+-spec status(pid()) -> {Status, ScheduleTime, TaskPid} when
       Status :: status(),
-      ScheduleTime :: datetime().
+      ScheduleTime :: datetime(),
+      TaskPid :: pid().
 
 status(Pid) ->
     gen_server:call(Pid, status).
@@ -141,7 +150,7 @@ stop(Pid) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec init([{cron(), mfargs()}]) -> {ok, #state{}}.
+-spec init([{sleeper() | cron(), mfargs()}]) -> {ok, #state{}}.
 
 init([{Schedule, Mfa}]) ->
     Self = self(),
@@ -168,7 +177,8 @@ init([{Schedule, Mfa}]) ->
 handle_call(status, _From, State) ->
     Status = State#state.status,
     Next = State#state.next,
-    {reply, {Status, Next}, State}.
+    TaskPid = State#state.task_pid,
+    {reply, {Status, Next, TaskPid}, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -233,8 +243,15 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
--spec run_task(cron(), mfargs(), pid()) -> no_return().
+-spec run_task(sleeper() | cron(), mfargs(), pid()) -> no_return().
 
+run_task({sleeper, Milliseconds}, Mfa, ParentPid) ->
+    {M, F, A} = Mfa,
+    gen_server:cast(ParentPid, {running, Milliseconds}),
+    apply(M, F, A),
+    gen_server:cast(ParentPid, {waiting, Milliseconds}),
+    timer:sleep(Milliseconds),
+    run_task({sleeper, Milliseconds}, Mfa, ParentPid);
 run_task(Schedule, Mfa, ParentPid) ->
     {M, F, A} = Mfa,
     CurrentDateTime = calendar:universal_time(),
@@ -384,7 +401,22 @@ extract_integers(Spec, Min, Max, Acc) ->
 
 -include_lib("eunit/include/eunit.hrl").
 
-nominal_workflow_test_() ->
+nominal_sleeper_workflow_test() ->
+    Schedule = {sleeper, 1000},
+    {ok, Pid} = leader_cron_task:start_link(
+		  Schedule,
+		  {timer, sleep, [1000]}),
+    ?assertMatch({running, 1000, _}, leader_cron_task:status(Pid)),
+    timer:sleep(1500),
+    ?assertMatch({waiting, 1000, _}, leader_cron_task:status(Pid)),
+    timer:sleep(1000),
+    ?assertMatch({running, 1000, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(ok, leader_cron_task:stop(Pid)),
+    ?assertException(exit,
+		     {normal,{gen_server,call,[Pid, status]}},
+		     leader_cron_task:status(Pid)).
+
+nominal_cron_workflow_test_() ->
     {timeout, 90,
      fun() ->
 	     io:format(user, "This test can take up to 90 seconds\n", []),
@@ -395,12 +427,12 @@ nominal_workflow_test_() ->
 	     Current = calendar:universal_time(),
 	     Next = next_valid_datetime(Schedule, Current),
 	     WaitFor = time_to_wait_millis(Current, Next),
-	     ?assertEqual({waiting, Next}, leader_cron_task:status(Pid)),
+	     ?assertMatch({waiting, Next, _}, leader_cron_task:status(Pid)),
 	     timer:sleep(WaitFor + 2000),
-	     ?assertEqual({running, Next}, leader_cron_task:status(Pid)),
+	     ?assertMatch({running, Next, _}, leader_cron_task:status(Pid)),
 	     timer:sleep(4000),
 	     Next1 = next_valid_datetime(Schedule, Next),
-	     ?assertEqual({waiting, Next1}, leader_cron_task:status(Pid)),
+	     ?assertMatch({waiting, Next1, _}, leader_cron_task:status(Pid)),
 	     ?assertEqual(ok, leader_cron_task:stop(Pid)),
 	     ?assertException(exit,
 			      {normal,{gen_server,call,[Pid, status]}},
