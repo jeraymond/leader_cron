@@ -13,7 +13,7 @@ clean: clean-doc
 get-deps:
 	$(REBAR) get-deps
 
-check:
+check: all
 	$(REBAR) eunit skip_deps=true
 
 dialyzer: clean all
