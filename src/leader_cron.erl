@@ -11,7 +11,10 @@
 -behaviour(gen_leader).
 
 %% API
--export([start_link/1, schedule_task/2, status/0]).
+-export([start_link/1,
+	 schedule_task/2,
+	 status/0,
+	 task_status/1]).
 
 %% gen_leader callbacks
 -export([init/1,
@@ -49,12 +52,20 @@ start_link(Nodes) ->
     Opts = [],
     gen_leader:start_link(?SERVER, Nodes, Opts, ?MODULE, [], []).
 
--spec schedule_task(Schedule, Mfa) -> ok | {error, term()} when
+-spec schedule_task(Schedule, Mfa) -> {ok, pid()} | {error, term()} when
       Schedule :: leader_cron_task:cron(),
       Mfa :: leader_cron_task:mfargs().
 
 schedule_task(Schedule, Mfa) ->
     gen_leader:leader_call(?SERVER, {schedule, {Schedule, Mfa}}).
+
+-spec task_status(pid()) -> {Status, ScheduleTime, TaskPid} when
+      Status :: leader_cron_task:status(),
+      ScheduleTime :: leader_cron_task:datetime(),
+      TaskPid :: pid().
+
+task_status(Pid) ->
+    gen_leader:leader_call(?SERVER, {task_status, Pid}).
 
 -spec status() -> Status when
       Status :: {[term()]}.
@@ -108,6 +119,9 @@ surrendered(State, Sync, _Election) ->
     {ok, State3}.
 
 %% @private
+handle_leader_call({task_status, Pid}, _From, State, _Election) ->
+    Status = leader_cron_task:status(Pid),
+    {reply, Status, State};
 handle_leader_call({schedule, {Schedule, Mfa}}, _From, State, Election) ->
     case leader_cron_task:start_link(Schedule, Mfa) of
 	{ok, Pid} ->
@@ -116,7 +130,7 @@ handle_leader_call({schedule, {Schedule, Mfa}}, _From, State, Election) ->
 	    PidList = [Pid|State#state.pids],
 	    State1 = State#state{tasks = TaskList, pids = PidList},
 	    ok = send_tasks(State1, Election),
-	    {reply, ok, State1};
+	    {reply, {ok, Pid}, State1};
 	{error, Reason} ->
 	    {reply, {error, Reason}, State}
     end;
@@ -224,3 +238,52 @@ start_tasks(State) ->
 		     end
 	     end, [], TaskList),
     State#state{pids = Pids}.
+
+%%%===================================================================
+%%% Unit Tests
+%%%===================================================================
+
+-ifdef(TEST).
+
+-compile(export_all).
+
+-include_lib("eunit/include/eunit.hrl").
+
+simple_task() ->
+    receive
+	go ->
+	    ok
+    after
+	1000 ->
+	    ok
+    end.
+
+dying_task(TimeToLiveMillis) ->
+    timer:sleep(TimeToLiveMillis),
+    throw(time_to_go).
+
+all_test_() ->
+    {setup,
+     fun() -> leader_cron:start_link([node()]) end,
+     [
+      fun test_single_node_task/0,
+      fun test_dying_task/0
+     ]}.
+
+test_single_node_task() ->
+    Schedule = {sleeper, 100},
+    {ok, SchedulerPid} = leader_cron:schedule_task(
+			   Schedule, {leader_cron, simple_task, []}),
+    {running, _, TaskPid} = leader_cron:task_status(SchedulerPid),
+    TaskPid ! go,
+    ?assertMatch({waiting, _, TaskPid}, leader_cron:task_status(SchedulerPid)).
+
+test_dying_task() ->
+    Schedule = {sleeper, 100000},
+    {ok, SchedulerPid} = leader_cron:schedule_task(
+			   Schedule, {leader_cron, dying_task, [100]}),
+    ?assertMatch({running, _, _TPid}, leader_cron:task_status(SchedulerPid)),
+    timer:sleep(200),
+    ?assertMatch({waiting, _, _TPid}, leader_cron:task_status(SchedulerPid)).
+
+-endif.
