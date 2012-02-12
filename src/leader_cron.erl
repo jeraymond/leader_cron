@@ -84,27 +84,21 @@ init([]) ->
 
 %% @private
 elected(State, _Election, undefined) ->
-    lager:info("~p is the leader", [node()]),
     Sync = State#state.tasks,
     State1 = case State#state.is_leader of
 		 false ->
-		     lager:info("New leader, starting tasks"),
 		     start_tasks(State);
 		 true ->
-		     lager:info("Already the leader"),
 		     State
 	     end,
     State2 = State1#state{is_leader = true},
     {ok, Sync, State2};
 elected(State, _Election, _Node) ->
-    lager:info("~p is the leader", [node()]),
     Sync = State#state.tasks,
     State1 = case State#state.is_leader of
 		 false ->
-		     lager:info("New leader, starting tasks"),
 		     start_tasks(State);
 		 true ->
-		     lager:info("Already the leader"),
 		     State
 	     end,
     State2 = State1#state{is_leader = true},
@@ -112,7 +106,6 @@ elected(State, _Election, _Node) ->
 
 %% @private
 surrendered(State, Sync, _Election) ->
-    lager:info("~p surrendered", [node()]),
     State1 = stop_tasks(State),
     State2 = save_tasks(State1, Sync),
     State3 = State2#state{is_leader = false},
@@ -135,23 +128,19 @@ handle_leader_call({schedule, {Schedule, Mfa}}, _From, State, Election) ->
 	    {reply, {error, Reason}, State}
     end;
 handle_leader_call(_Request, _From, State, _Election) ->
-    lager:info("leader call ~p", [_Request]),
     {reply, ok, State}.
 
 %% @private
 handle_leader_cast(_Request, State, _Election) ->
-    lager:info("leader cast ~p", [_Request]),
     {noreply, State}.
 
 %% @private
 from_leader({tasks, Tasks}, State, _Election) ->
-    lager:info("from leader ~p", [Tasks]),
     State1 = save_tasks(State, Tasks),
     {ok, State1}.
 
 %% @private
 handle_DOWN(_Node, State, _Election) ->
-    lager:info("~p node down", [_Node]),
     {ok, State}.
 
 %% @private
@@ -189,7 +178,6 @@ code_change(_OldVsn, State, _Election, _Extra) ->
 %%%===================================================================
 
 save_tasks(State, Tasks) ->
-    lager:info("Saving tasks"),
     State#state{tasks = Tasks}.
 
 -spec send_tasks(State, Election) -> ok when
@@ -200,10 +188,8 @@ send_tasks(State, Election) ->
     Tasks = State#state.tasks,
     case gen_leader:alive(Election) -- [node()] of
 	[] ->
-	    lager:info("No nodes to send tasks"),
 	    ok;
 	Alive ->
-	    lager:info("Sending tasks to nodes"),
 	    Election = gen_leader:broadcast({from_leader, {tasks, Tasks}},
 					    Alive,
 					    Election),
@@ -213,7 +199,6 @@ send_tasks(State, Election) ->
 -spec stop_tasks(State :: #state{}) -> #state{}.
 
 stop_tasks(State) ->
-    lager:info("Stopping tasks"),
     Pids = State#state.pids,
     lists:foreach(fun(Pid) ->
 			  ok = leader_cron_task:stop(Pid)
@@ -229,11 +214,11 @@ start_tasks(State) ->
 		     {Schedule, Mfa} = Task,
 		     case leader_cron_task:start_link(Schedule, Mfa) of
 			 {ok, Pid} ->
-			     lager:info("Started task ~p", [Mfa]),
 			     [Pid|Acc];
 			 {error, Reason} ->
-			     lager:error("Could not start task ~p ~p",
-					 [Mfa, Reason]),
+			     Format = "Could not start task ~p ~p",
+			     Message = io_lib:format(Format, [Mfa, Reason]),
+			     error_logger:error_report(Message),
 			     Acc
 		     end
 	     end, [], TaskList),
