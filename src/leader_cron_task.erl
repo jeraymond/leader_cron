@@ -248,7 +248,7 @@ code_change(_OldVsn, State, _Extra) ->
 run_task({sleeper, Milliseconds}, Mfa, ParentPid) ->
     {M, F, A} = Mfa,
     gen_server:cast(ParentPid, {running, Milliseconds}),
-    apply(M, F, A),
+    apply_task(M, F, A),
     gen_server:cast(ParentPid, {waiting, Milliseconds}),
     timer:sleep(Milliseconds),
     run_task({sleeper, Milliseconds}, Mfa, ParentPid);
@@ -260,8 +260,22 @@ run_task(Schedule, Mfa, ParentPid) ->
     gen_server:cast(ParentPid, {waiting, NextValidDateTime}),
     timer:sleep(SleepFor),
     gen_server:cast(ParentPid, {running, NextValidDateTime}),
-    apply(M, F, A),
+    apply_task(M, F, A),
     run_task(Schedule, Mfa, ParentPid).
+
+-spec apply_task(atom(), atom(), [term()]) -> any().
+
+apply_task(M, F, A) ->
+    try
+	apply(M, F, A)
+    catch
+	Error:Reason ->
+	    Stacktrace = erlang:get_stacktrace(),
+	    Format = "Task ~p in process ~p with value:~n~p",
+	    Message = io_lib:format(Format,
+				    [Error, self(), {Reason, Stacktrace}]),
+	    error_logger:error_report(Message)
+    end.
 
 -spec time_to_wait_millis(datetime(), datetime()) -> integer().
 
