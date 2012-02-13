@@ -2,7 +2,6 @@
 %%% @author Jeremy Raymond <jeraymond@gmail.com>
 %%% @copyright (C) 2012, Jeremy Raymond
 %%% @doc
-%%%
 %%% The leader_cron_task module provides different methods for scheduling
 %%% a task to be executed periodically in the future. The supported methods
 %%% are sleeper mode and cron mode.
@@ -10,20 +9,21 @@
 %%% A sleeper mode schedule repeatedly executes a task then sleeps for a
 %%% specified number of milliseconds before repeating the task.
 %%%
-%%% A cron mode schedule acts similarly to Unix cron. The schedule is defined
-%%% by five fields
+%%% A cron mode schedule acts similarly to Unix cron. The schedule is
+%%% defined by the cron tuple
+%%%
+%%% <code>{cron, {Minute, Hour, DayOfMonth, Month, DayOfWeek}}</code>
+%%%
+%%% The valid range of values for these fields are
 %%%
 %%% <pre>
 %%% Field         Valid Range
+%%% ------------  -------------------
 %%% minute        0 - 59
 %%% hour          0 - 23
 %%% day of month  1 - 31
 %%% month         1 - 12
 %%% day of week   0 - 6 (Sunday is 0) </pre>
-%%%
-%%% The schedule is defined by the cron tuple
-%%%
-%%% <code>{cron, {Minute, Hour, DayOfMonth, Month, DayOfWeek}}</code>
 %%%
 %%% The semantics of these fields align with Unix cron. Each field
 %%% specifies which values in the range are valid for task execution. The
@@ -31,6 +31,7 @@
 %%%
 %%% <pre>
 %%% Field Spec                     Example            Unix Cron
+%%% -----------------------------  -----------------  ---------
 %%% all                            all                *
 %%% {range, integer(), integer()}  {range, 1, 5}      1-5
 %%% {list, [integer()]}            {list, [1, 3, 7]}  1,3,7</pre>
@@ -164,13 +165,6 @@ init([{Schedule, Mfa}]) ->
 %% @doc
 %% Handling call messages
 %%
-%% @spec handle_call(Request, From, State) ->
-%%                                   {reply, Reply, State} |
-%%                                   {reply, Reply, State, Timeout} |
-%%                                   {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, Reply, State} |
-%%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
 
@@ -185,9 +179,6 @@ handle_call(status, _From, State) ->
 %% @doc
 %% Handling cast messages
 %%
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
-%%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
 
@@ -203,9 +194,6 @@ handle_cast(stop, State) ->
 %% @doc
 %% Handling all non call/cast messages
 %%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
 
@@ -215,12 +203,7 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
 %%
-%% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
 
@@ -232,7 +215,6 @@ terminate(_Reason, _State) ->
 %% @doc
 %% Convert process state when code is changed
 %%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @end
 %%--------------------------------------------------------------------
 

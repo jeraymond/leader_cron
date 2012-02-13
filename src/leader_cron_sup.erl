@@ -2,6 +2,8 @@
 %%% @author Jeremy Raymond <jeraymond@gmail.com>
 %%% @copyright (C) 2012, Jeremy Raymond
 %%% @doc
+%%% The {@link leader_cron} supervisor.
+%%% @see leader_cron
 %%%
 %%% @end
 %%% Created : 31 Jan 2012 by Jeremy Raymond <jeraymond@gmail.com>
@@ -24,11 +26,14 @@
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Starts the leader_cron supervisor
+%% Starts the leader_cron supervisor with the given node list. See
+%% {@link leader_cron:start_link/1}.
 %%
 %% @end
 %%--------------------------------------------------------------------
-%-spec start_link([node()]) -> ok.
+
+-spec start_link([node()]) -> ignore | {error, term()} | {ok, pid()}.
+
 start_link(Nodes) ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, [Nodes]).
 
@@ -39,17 +44,10 @@ start_link(Nodes) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Whenever a supervisor is started using supervisor:start_link/[2,3],
-%% this function is called by the new process to find out about
-%% restart strategy, maximum restart frequency and child
-%% specifications.
 %%
-%% @spec init(Args) -> {ok, {SupFlags, [ChildSpec]}} |
-%%                     ignore |
-%%                     {error, Reason}
 %% @end
 %%--------------------------------------------------------------------
-%-spec init([node()]) -> {ok, {list(), list()}} | {error, term()}.
+
 init([]) ->
     {error, no_node_list};
 init([Nodes]) ->

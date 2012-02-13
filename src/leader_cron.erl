@@ -2,6 +2,23 @@
 %%% @author Jeremy Raymond <jeraymond@gmail.com>
 %%% @copyright (C) 2012, Jeremy Raymond
 %%% @doc
+%%% The leader_cron module provides a distrubuted task scheduler for
+%%% executing tasks periodically. The connected nodes elect a leader
+%%% to manage task scheduling and execution. Should the current leader
+%%% become unavailable a new leader node is elected who resumes task
+%%% execution responsibilities.
+%%%
+%%% There are several different ways to specify the schedule for a task.
+%%% See {@link leader_cron_task} for details.
+%%%
+%%% Each node that is part of the scheduling cluster must be working
+%%% with the same list of nodes as given to {@link start_link/1}. If
+%%% the node list needs to change <code>leader_cron</code> must be
+%%% stopped on all nodes. Once stopped everywhere restart
+%%% <code>leader_cron</code> with the new node list. Rolling updates
+%%% currently are not supported.
+%%%
+%%% @see leader_cron_task
 %%%
 %%% @end
 %%% Created : 31 Jan 2012 by Jeremy Raymond <jeraymond@gmail.com>
@@ -40,6 +57,10 @@
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Creates a linked process to manage scheduled tasks in coordination
+%% with the given nodes. The current node must be part of the node
+%% list. Each leader_cron node must be working with the same list of
+%% nodes to coordinate correctly.
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -52,12 +73,29 @@ start_link(Nodes) ->
     Opts = [],
     gen_leader:start_link(?SERVER, Nodes, Opts, ?MODULE, [], []).
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Schedules a task. See {@link leader_cron_task} for scheduling
+%% details.
+%%
+%% @end
+%%--------------------------------------------------------------------
+
+
 -spec schedule_task(Schedule, Mfa) -> {ok, pid()} | {error, term()} when
       Schedule :: leader_cron_task:cron(),
       Mfa :: leader_cron_task:mfargs().
 
 schedule_task(Schedule, Mfa) ->
     gen_leader:leader_call(?SERVER, {schedule, {Schedule, Mfa}}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets the status of a task.
+%%
+%% @end
+%%--------------------------------------------------------------------
+
 
 -spec task_status(pid()) -> {Status, ScheduleTime, TaskPid} when
       Status :: leader_cron_task:status(),
@@ -66,6 +104,13 @@ schedule_task(Schedule, Mfa) ->
 
 task_status(Pid) ->
     gen_leader:leader_call(?SERVER, {task_status, Pid}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets the status of this scheduler.
+%%
+%% @end
+%%--------------------------------------------------------------------
 
 -spec status() -> Status when
       Status :: {[term()]}.
