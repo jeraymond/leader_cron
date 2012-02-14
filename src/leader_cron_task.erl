@@ -208,7 +208,8 @@ handle_info(_Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
+    exit(State#state.task_pid, kill),
     ok.
 
 %%--------------------------------------------------------------------
@@ -403,14 +404,18 @@ nominal_sleeper_workflow_test() ->
     {ok, Pid} = leader_cron_task:start_link(
 		  Schedule,
 		  {timer, sleep, [1000]}),
+    {_, _, TaskPid} = leader_cron_task:status(Pid),
     ?assertMatch({running, 1000, _}, leader_cron_task:status(Pid)),
     timer:sleep(1500),
     ?assertMatch({waiting, 1000, _}, leader_cron_task:status(Pid)),
     timer:sleep(1000),
     ?assertMatch({running, 1000, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(true, is_process_alive(TaskPid)),
     ?assertEqual(ok, leader_cron_task:stop(Pid)),
+    timer:sleep(100),
+    ?assertEqual(false, is_process_alive(TaskPid)),
     ?assertException(exit,
-		     {normal,{gen_server,call,[Pid, status]}},
+		     {noproc,{gen_server,call,[Pid, status]}},
 		     leader_cron_task:status(Pid)).
 
 nominal_cron_workflow_test_() ->

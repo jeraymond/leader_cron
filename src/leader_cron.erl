@@ -31,6 +31,7 @@
 -export([start_link/1,
 	 status/0,
 	 schedule_task/2,
+	 cancel_task/1,
 	 task_status/1,
 	 task_list/0]).
 
@@ -108,6 +109,19 @@ schedule_task(Schedule, Mfa) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Cancels a task.
+%%
+%% @end
+%%--------------------------------------------------------------------
+
+-spec cancel_task(pid()) -> ok | {error, Reason} when
+      Reason :: term().
+
+cancel_task(Pid) ->
+    gen_leader:leader_call(?SERVER, {cancel, Pid}).
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Gets the status of a task.
 %%
 %% @end
@@ -123,7 +137,7 @@ task_status(Pid) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Gets the list of tasks. 
+%% Gets the list of tasks.
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -171,25 +185,35 @@ surrendered(State, Sync, _Election) ->
     {ok, State3}.
 
 %% @private
-handle_leader_call(task_list, _From, State, _Election) ->
+handle_leader_call({cancel, Pid}, _From, State, Election) ->
     Tasks = State#state.tasks,
-    {reply, Tasks, State};
-handle_leader_call({task_status, Pid}, _From, State, _Election) ->
-    Status = leader_cron_task:status(Pid),
-    {reply, Status, State};
+    {Reply, State1} = case lists:keyfind(Pid, 1, Tasks) of
+			  false ->
+			      {{error, no_such_pid}, State};
+			  {Pid, _, _} ->
+			      ok = leader_cron_task:stop(Pid),
+			      Tasks1 = lists:keydelete(Pid, 1, Tasks),
+			      send_tasks(Tasks1, Election),
+			      {ok, State#state{tasks = Tasks1}}
+		      end,
+    {reply, Reply, State1};
 handle_leader_call({schedule, {Schedule, Mfa}}, _From, State, Election) ->
     case leader_cron_task:start_link(Schedule, Mfa) of
 	{ok, Pid} ->
 	    Task = {Pid, Schedule, Mfa},
 	    TaskList = [Task|State#state.tasks],
 	    State1 = State#state{tasks = TaskList},
-	    ok = send_tasks(State1, Election),
+	    ok = send_tasks(TaskList, Election),
 	    {reply, {ok, Pid}, State1};
 	{error, Reason} ->
 	    {reply, {error, Reason}, State}
     end;
-handle_leader_call(_Request, _From, State, _Election) ->
-    {reply, ok, State}.
+handle_leader_call({task_status, Pid}, _From, State, _Election) ->
+    Status = leader_cron_task:status(Pid),
+    {reply, Status, State};
+handle_leader_call(task_list, _From, State, _Election) ->
+    Tasks = State#state.tasks,
+    {reply, Tasks, State}.
 
 %% @private
 handle_leader_cast(_Request, State, _Election) ->
@@ -241,12 +265,11 @@ code_change(_OldVsn, State, _Election, _Extra) ->
 save_tasks(State, Tasks) ->
     State#state{tasks = Tasks}.
 
--spec send_tasks(State, Election) -> ok when
-      State :: #state{},
+-spec send_tasks(Tasks, Election) -> ok when
+      Tasks :: [task()],
       Election :: term().
 
-send_tasks(State, Election) ->
-    Tasks = State#state.tasks,
+send_tasks(Tasks, Election) ->
     case gen_leader:alive(Election) -- [node()] of
 	[] ->
 	    ok;
@@ -324,7 +347,11 @@ test_single_node_task() ->
     {running, _, TaskPid} = leader_cron:task_status(SchedulerPid),
     TaskPid ! go,
     ?assertMatch({waiting, _, TaskPid}, leader_cron:task_status(SchedulerPid)),
-    ?assertEqual([{SchedulerPid, Schedule, Mfa}], leader_cron:task_list()).
+    ?assertEqual([{SchedulerPid, Schedule, Mfa}], leader_cron:task_list()),
+    ?assertEqual(true, is_process_alive(TaskPid)),
+    ?assertEqual(ok, leader_cron:cancel_task(SchedulerPid)),
+    ?assertEqual([], leader_cron:task_list()),
+    ?assertEqual(false, is_process_alive(TaskPid)).
 
 test_dying_task() ->
     Schedule = {sleeper, 100000},
