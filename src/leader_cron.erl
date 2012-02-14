@@ -29,9 +29,10 @@
 
 %% API
 -export([start_link/1,
-	 schedule_task/2,
 	 status/0,
-	 task_status/1]).
+	 schedule_task/2,
+	 task_status/1,
+	 task_list/0]).
 
 %% gen_leader callbacks
 -export([init/1,
@@ -49,7 +50,11 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {pids = [], tasks = [], is_leader = false}).
+-type task() :: {pid(),
+		 leader_cron_task:schedule(),
+		 leader_cron_task:mfargs()}.
+
+-record(state, {tasks = [], is_leader = false}).
 
 %%%===================================================================
 %%% API
@@ -75,15 +80,27 @@ start_link(Nodes) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Gets the status of this scheduler.
+%%
+%% @end
+%%--------------------------------------------------------------------
+
+-spec status() -> Status when
+      Status :: {[term()]}.
+
+status() ->
+    gen_leader:call(?SERVER, status).
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Schedules a task. See {@link leader_cron_task} for scheduling
 %% details.
 %%
 %% @end
 %%--------------------------------------------------------------------
 
-
 -spec schedule_task(Schedule, Mfa) -> {ok, pid()} | {error, term()} when
-      Schedule :: leader_cron_task:cron(),
+      Schedule :: leader_cron_task:schedule(),
       Mfa :: leader_cron_task:mfargs().
 
 schedule_task(Schedule, Mfa) ->
@@ -96,7 +113,6 @@ schedule_task(Schedule, Mfa) ->
 %% @end
 %%--------------------------------------------------------------------
 
-
 -spec task_status(pid()) -> {Status, ScheduleTime, TaskPid} when
       Status :: leader_cron_task:status(),
       ScheduleTime :: leader_cron_task:datetime(),
@@ -107,17 +123,15 @@ task_status(Pid) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Gets the status of this scheduler.
+%% Gets the list of tasks. 
 %%
 %% @end
 %%--------------------------------------------------------------------
 
--spec status() -> Status when
-      Status :: {[term()]}.
+-spec task_list() -> [task()].
 
-status() ->
-    gen_leader:call(?SERVER, status).
-
+task_list() ->
+    gen_leader:leader_call(?SERVER, task_list).
 
 %%%===================================================================
 %%% gen_leader callbacks
@@ -157,16 +171,18 @@ surrendered(State, Sync, _Election) ->
     {ok, State3}.
 
 %% @private
+handle_leader_call(task_list, _From, State, _Election) ->
+    Tasks = State#state.tasks,
+    {reply, Tasks, State};
 handle_leader_call({task_status, Pid}, _From, State, _Election) ->
     Status = leader_cron_task:status(Pid),
     {reply, Status, State};
 handle_leader_call({schedule, {Schedule, Mfa}}, _From, State, Election) ->
     case leader_cron_task:start_link(Schedule, Mfa) of
 	{ok, Pid} ->
-	    Task = {Schedule, Mfa},
+	    Task = {Pid, Schedule, Mfa},
 	    TaskList = [Task|State#state.tasks],
-	    PidList = [Pid|State#state.pids],
-	    State1 = State#state{tasks = TaskList, pids = PidList},
+	    State1 = State#state{tasks = TaskList},
 	    ok = send_tasks(State1, Election),
 	    {reply, {ok, Pid}, State1};
 	{error, Reason} ->
@@ -244,30 +260,31 @@ send_tasks(State, Election) ->
 -spec stop_tasks(State :: #state{}) -> #state{}.
 
 stop_tasks(State) ->
-    Pids = State#state.pids,
-    lists:foreach(fun(Pid) ->
-			  ok = leader_cron_task:stop(Pid)
-		  end, Pids),
-    State#state{pids = []}.
+    Tasks = State#state.tasks,
+    Tasks1 = lists:foldl(fun({Pid, Schedule, Mfa}, Acc) ->
+				 ok = leader_cron_task:stop(Pid),
+				 [{undefined, Schedule, Mfa}|Acc]
+			 end, [], Tasks),
+    State#state{tasks = Tasks1}.
 
 -spec start_tasks(#state{}) -> #state{}.
 
 start_tasks(State) ->
     TaskList = State#state.tasks,
-    Pids = lists:foldl(
+    TaskList1 = lists:foldl(
 	     fun(Task, Acc) ->
-		     {Schedule, Mfa} = Task,
+		     {_, Schedule, Mfa} = Task,
 		     case leader_cron_task:start_link(Schedule, Mfa) of
 			 {ok, Pid} ->
-			     [Pid|Acc];
+			     [{Pid, Schedule, Mfa}|Acc];
 			 {error, Reason} ->
 			     Format = "Could not start task ~p ~p",
 			     Message = io_lib:format(Format, [Mfa, Reason]),
 			     error_logger:error_report(Message),
-			     Acc
+			     [{undefined, Schedule, Mfa}|Acc]
 		     end
 	     end, [], TaskList),
-    State#state{pids = Pids}.
+    State#state{tasks = TaskList1}.
 
 %%%===================================================================
 %%% Unit Tests
@@ -302,11 +319,12 @@ all_test_() ->
 
 test_single_node_task() ->
     Schedule = {sleeper, 100},
-    {ok, SchedulerPid} = leader_cron:schedule_task(
-			   Schedule, {leader_cron, simple_task, []}),
+    Mfa = {leader_cron, simple_task, []},
+    {ok, SchedulerPid} = leader_cron:schedule_task(Schedule, Mfa),
     {running, _, TaskPid} = leader_cron:task_status(SchedulerPid),
     TaskPid ! go,
-    ?assertMatch({waiting, _, TaskPid}, leader_cron:task_status(SchedulerPid)).
+    ?assertMatch({waiting, _, TaskPid}, leader_cron:task_status(SchedulerPid)),
+    ?assertEqual([{SchedulerPid, Schedule, Mfa}], leader_cron:task_list()).
 
 test_dying_task() ->
     Schedule = {sleeper, 100000},

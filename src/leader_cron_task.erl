@@ -61,7 +61,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--export_type([sleeper/0, cron/0, mfargs/0, datetime/0, status/0]).
+-export_type([sleeper/0, cron/0, mfargs/0, datetime/0, status/0, schedule/0]).
 
 -define(SERVER, ?MODULE).
 
@@ -76,6 +76,7 @@
 -define(HOUR_IN_SECONDS, 3600).
 -define(MINUTE_IN_SECONDS, 60).
 
+-type schedule() :: sleeper() | cron().
 -type sleeper() :: {sleeper, Milliseconds::pos_integer()}.
 -type cron() :: {cron, {Minute :: cronspec(),
 			Hour :: cronspec(),
@@ -103,7 +104,7 @@
 %%--------------------------------------------------------------------
 
 -spec start_link(Schedule, Mfa) -> {ok, pid()} | {error, Reason} when
-      Schedule :: sleeper() | cron(),
+      Schedule :: schedule(),
       Mfa :: mfargs(),
       Reason :: term().
 
@@ -151,7 +152,7 @@ stop(Pid) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec init([{sleeper() | cron(), mfargs()}]) -> {ok, #state{}}.
+-spec init([{schedule(), mfargs()}]) -> {ok, #state{}}.
 
 init([{Schedule, Mfa}]) ->
     Self = self(),
@@ -225,7 +226,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
--spec run_task(sleeper() | cron(), mfargs(), pid()) -> no_return().
+-spec run_task(schedule(), mfargs(), pid()) -> no_return().
 
 run_task({sleeper, Milliseconds}, Mfa, ParentPid) ->
     {M, F, A} = Mfa,
