@@ -437,7 +437,6 @@ nominal_sleeper_workflow_test() ->
 nominal_cron_workflow_test_() ->
     {timeout, 90,
      fun() ->
-	     io:format(user, "This test can take up to 90 seconds\n", []),
 	     Schedule = {cron, {all, all, all, all, all}},
 	     {ok, Pid} = leader_cron_task:start_link(
 			   Schedule,

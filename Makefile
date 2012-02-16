@@ -9,12 +9,18 @@ all: get-deps
 
 clean: clean-doc
 	$(REBAR) clean
+	rm -rf log logs
 
 get-deps:
 	$(REBAR) get-deps
 
-check: all
+check: all eunit ct
+
+eunit: all
 	$(REBAR) eunit skip_deps=true
+
+ct: all
+	$(REBAR) ct skip_deps=true
 
 dialyzer: clean all
 	dialyzer --plt $(PLT) -Wno_undefined_callbacks ebin
