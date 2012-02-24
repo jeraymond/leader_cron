@@ -20,10 +20,21 @@
 %%% @doc
 %%% The leader_cron_task module provides different methods for scheduling
 %%% a task to be executed periodically in the future. The supported methods
-%%% are sleeper mode and cron mode.
+%%% are one shot, sleeper, and cron mode.
+%%%
+%%% A oneshot schedule executes a task once after sleeping a specified
+%%% number of milliseconds or at a given datetime.
+%%%
+%%% <code>
+%%% {oneshot, 60000} % execute task once after waiting a minute<br />
+%%% {oneshot, {{2012, 2, 23}, {1, 0, 0}}} % execute task on Feb 23, 2012 at 1 am
+%%% </code>
 %%%
 %%% A sleeper mode schedule repeatedly executes a task then sleeps for a
 %%% specified number of milliseconds before repeating the task.
+%%%
+%%% <code>{sleeper, 5000} % execute task then wait 5 seconds before the
+%%% next execution</code>
 %%%
 %%% A cron mode schedule acts similarly to Unix cron. The schedule is
 %%% defined by the cron tuple
@@ -92,8 +103,9 @@
 -define(HOUR_IN_SECONDS, 3600).
 -define(MINUTE_IN_SECONDS, 60).
 
--type schedule() :: sleeper() | cron().
--type sleeper() :: {sleeper, Milliseconds::pos_integer()}.
+-type schedule() :: oneshot() | sleeper() | cron().
+-type oneshot() :: {oneshot, Millis::pos_integer() | datetime()}.
+-type sleeper() :: {sleeper, Millis::pos_integer()}.
 -type cron() :: {cron, {Minute :: cronspec(),
 			Hour :: cronspec(),
 			DayOfMonth :: cronspec(),
@@ -102,7 +114,7 @@
 -type cronspec() :: all | [rangespec() | listspec()].
 -type rangespec() :: {range, Min :: integer(), Max :: integer()}.
 -type listspec() :: {list, Values :: [integer()]}.
--type status() :: waiting | running.
+-type status() :: waiting | running | done | error.
 -type mfargs() :: {Module :: atom(), Function :: atom(), Args :: [term()]}.
 -type datetime() :: calendar:datetime().
 
@@ -131,14 +143,16 @@ start_link(Schedule, Mfa) ->
 %% @doc
 %% Gets the current status of the task and the trigger time. If running
 %% the trigger time denotes the time the task started. If waiting the
-%% time denotes the next time the task will run.
+%% time denotes the next time the task will run. If done the time the
+%% task ran. If error the cause of the error.
 %%
 %% @end
 %%--------------------------------------------------------------------
 
 -spec status(pid()) -> {Status, ScheduleTime, TaskPid} when
       Status :: status(),
-      ScheduleTime :: datetime(),
+      ScheduleTime :: datetime() | pos_integer() | {error, Reason},
+      Reason :: term(),
       TaskPid :: pid().
 
 status(Pid) ->
@@ -199,6 +213,10 @@ handle_call(status, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 
+handle_cast({error, Message}, State) ->
+    {noreply, State#state{status = error, next = Message}};
+handle_cast({done, Schedule}, State) ->
+    {noreply, State#state{status = done, next = Schedule}};
 handle_cast({waiting, NextValidDateTime}, State) ->
     {noreply, State#state{status = waiting, next = NextValidDateTime}};
 handle_cast({running, NextValidDateTime}, State) ->
@@ -243,15 +261,39 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
--spec run_task(schedule(), mfargs(), pid()) -> no_return().
-
-run_task({sleeper, Milliseconds}, Mfa, ParentPid) ->
+run_task({oneshot, Millis}, Mfa, ParentPid) when is_integer(Millis) ->
     {M, F, A} = Mfa,
-    gen_server:cast(ParentPid, {running, Milliseconds}),
+    gen_server:cast(ParentPid, {waiting, Millis}),
+    timer:sleep(Millis),
+    gen_server:cast(ParentPid, {running, Millis}),
     apply_task(M, F, A),
-    gen_server:cast(ParentPid, {waiting, Milliseconds}),
-    timer:sleep(Milliseconds),
-    run_task({sleeper, Milliseconds}, Mfa, ParentPid);
+    gen_server:cast(ParentPid, {done, Millis});
+run_task({oneshot, DateTime}, Mfa, ParentPid) ->
+    {M, F, A} = Mfa,
+    CurrentDateTime = calendar:universal_time(),
+    CurrentSeconds = calendar:datetime_to_gregorian_seconds(CurrentDateTime),
+    ScheduleSeconds = calendar:datetime_to_gregorian_seconds(DateTime),
+    WaitSeconds = ScheduleSeconds - CurrentSeconds,
+    case WaitSeconds > 0 of
+	true ->
+	    gen_server:cast(ParentPid, {waiting, DateTime}),
+	    timer:sleep(WaitSeconds * 1000),
+	    gen_server:cast(ParentPid, {running, DateTime}),
+	    apply_task(M, F, A),
+	    gen_server:cast(ParentPid, {done, DateTime});
+	false ->
+	    Format = "Schedule datetime ~p is in the past",
+	    Message = lists:flatten(io_lib:format(Format, [DateTime])),
+	    error_logger:error_report(Message),
+	    gen_server:cast(ParentPid, {error, Message})
+    end;
+run_task({sleeper, Millis}, Mfa, ParentPid) ->
+    {M, F, A} = Mfa,
+    gen_server:cast(ParentPid, {running, Millis}),
+    apply_task(M, F, A),
+    gen_server:cast(ParentPid, {waiting, Millis}),
+    timer:sleep(Millis),
+    run_task({sleeper, Millis}, Mfa, ParentPid);
 run_task(Schedule, Mfa, ParentPid) ->
     {M, F, A} = Mfa,
     CurrentDateTime = calendar:universal_time(),
@@ -272,8 +314,9 @@ apply_task(M, F, A) ->
 	Error:Reason ->
 	    Stacktrace = erlang:get_stacktrace(),
 	    Format = "Task ~p in process ~p with value:~n~p",
-	    Message = io_lib:format(Format,
-				    [Error, self(), {Reason, Stacktrace}]),
+	    Message = lists:flatten(io_lib:format(
+				      Format,
+				      [Error, self(), {Reason, Stacktrace}])),
 	    error_logger:error_report(Message)
     end.
 
@@ -414,6 +457,39 @@ extract_integers(Spec, Min, Max, Acc) ->
 -compile(export_all).
 
 -include_lib("eunit/include/eunit.hrl").
+
+oneshot_millis_test() ->
+    Schedule = {oneshot, 500},
+    {ok, Pid} = leader_cron_task:start_link(Schedule, {timer, sleep, [500]}),
+    {_, _, TaskPid} = leader_cron_task:status(Pid),
+    ?assertMatch({waiting, 500, _}, leader_cron_task:status(Pid)),
+    timer:sleep(550),
+    ?assertMatch({running, 500, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(true, is_process_alive(TaskPid)),
+    timer:sleep(550),
+    ?assertMatch({done, 500, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(false, is_process_alive(TaskPid)).
+
+oneshot_datetime_test() ->
+    DateTime = advance_seconds(calendar:universal_time(), 2),
+    Schedule = {oneshot, DateTime},
+    {ok, Pid} = leader_cron_task:start_link(Schedule, {timer, sleep, [500]}),
+    {_, _, TaskPid} = leader_cron_task:status(Pid),
+    ?assertMatch({waiting, DateTime, _}, leader_cron_task:status(Pid)),
+    timer:sleep(2100),
+    ?assertMatch({running, DateTime, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(true, is_process_alive(TaskPid)),
+    timer:sleep(550),
+    ?assertMatch({done, DateTime, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(false, is_process_alive(TaskPid)).
+
+oneshot_in_the_past_test() ->
+    DateTime = {{1970, 1, 1}, {1, 1, 1}},
+    Schedule = {oneshot, DateTime},
+    {ok, Pid} = leader_cron_task:start_link(Schedule, {timer, sleep, [500]}),
+    {_, _, TaskPid} = leader_cron_task:status(Pid),
+    ?assertMatch({error, _, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(false, is_process_alive(TaskPid)).
 
 nominal_sleeper_workflow_test() ->
     Schedule = {sleeper, 1000},

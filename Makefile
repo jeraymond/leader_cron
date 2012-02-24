@@ -17,6 +17,7 @@ get-deps:
 check: all eunit ct
 
 eunit: all
+	@echo These tests take a few minutes...
 	$(REBAR) eunit skip_deps=true
 
 ct: all
