@@ -7,3 +7,5 @@ ebin
 .leader_cron_plt
 doc
 *.beam
+xref_warnings
+dialyzer_warnings

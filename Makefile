@@ -23,8 +23,14 @@ eunit: all
 ct: all
 	$(REBAR) ct skip_deps=true
 
+xref: clean all
+	-@./rebar xref > xref_warnings
+	@diff -U0 xref_reference xref_warnings
+
 dialyzer: clean all
-	dialyzer --plt $(PLT) -Wno_undefined_callbacks ebin
+	-@dialyzer -q --plt $(PLT) -Wno_undefined_callbacks \
+		ebin > dialyzer_warnings
+	@diff -U0 dialyzer_reference dialyzer_warnings
 
 build_plt: all
 	dialyzer --build_plt --output_plt $(PLT) \
