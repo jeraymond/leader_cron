@@ -49,7 +49,9 @@
 	 schedule_task/2,
 	 cancel_task/1,
 	 task_status/1,
-	 task_list/0]).
+	 task_list/0,
+	 remove_done_tasks/0
+	]).
 
 %% gen_leader callbacks
 -export([init/1,
@@ -163,6 +165,18 @@ task_status(Pid) ->
 task_list() ->
     gen_leader:leader_call(?SERVER, task_list).
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Remove tasks with a status of done.
+%%
+%% @end
+%%--------------------------------------------------------------------
+
+-spec remove_done_tasks() -> ok.
+
+remove_done_tasks() ->
+    gen_leader:leader_call(?SERVER, remove_done_tasks).
+
 %%%===================================================================
 %%% gen_leader callbacks
 %%%===================================================================
@@ -229,7 +243,13 @@ handle_leader_call({task_status, Pid}, _From, State, _Election) ->
     {reply, Status, State};
 handle_leader_call(task_list, _From, State, _Election) ->
     Tasks = State#state.tasks,
-    {reply, Tasks, State}.
+    {reply, Tasks, State};
+handle_leader_call(remove_done_tasks, _From, State, Election) ->
+    Tasks = State#state.tasks,
+    Tasks1 = lists:foldl(fun remove_task_if_done/2, [], Tasks),
+    State1 = State#state{tasks = Tasks1},
+    ok = send_tasks(Tasks1, Election),
+    {reply, ok, State1}.
 
 %% @private
 handle_leader_cast(_Request, State, _Election) ->
@@ -325,6 +345,16 @@ start_tasks(State) ->
 	     end, [], TaskList),
     State#state{tasks = TaskList1}.
 
+remove_task_if_done(Task, Acc) ->
+    {Pid, _, _} = Task,
+    case leader_cron_task:status(Pid) of
+	{done, _, _} ->
+	    ok = leader_cron_task:stop(Pid),
+	    Acc;
+	_ ->
+	    [Task|Acc]
+    end.
+
 %%%===================================================================
 %%% Unit Tests
 %%%===================================================================
@@ -349,11 +379,18 @@ dying_task(TimeToLiveMillis) ->
     throw(time_to_go).
 
 all_test_() ->
-    {setup,
-     fun() -> leader_cron:start_link([node()]) end,
+    {foreach,
+     fun() ->
+	     leader_cron:start_link([node()]),
+	     Tasks = leader_cron:task_list(),
+	     lists:foreach(fun({Pid, _, _}) ->
+				   ok = leader_cron:cancel_task(Pid)
+			   end, Tasks)
+     end,
      [
       fun test_single_node_task/0,
-      fun test_dying_task/0
+      fun test_dying_task/0,
+      fun test_done_task_removal/0
      ]}.
 
 test_single_node_task() ->
@@ -376,5 +413,15 @@ test_dying_task() ->
     ?assertMatch({running, _, _TPid}, leader_cron:task_status(SchedulerPid)),
     timer:sleep(200),
     ?assertMatch({waiting, _, _TPid}, leader_cron:task_status(SchedulerPid)).
+
+test_done_task_removal() ->
+    Schedule = {oneshot, 1},
+    Mfa = {timer, sleep, [1]},
+    {ok, Pid} = leader_cron:schedule_task(Schedule, Mfa),
+    timer:sleep(5),
+    ?assertMatch([_], leader_cron:task_list()),
+    ?assertMatch({done, _, _}, leader_cron:task_status(Pid)),
+    ?assertEqual(ok, leader_cron:remove_done_tasks()),
+    ?assertEqual([], leader_cron:task_list()).
 
 -endif.
