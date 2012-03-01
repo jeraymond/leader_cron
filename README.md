@@ -20,15 +20,18 @@ milliseconds
 
 Startup leader_cron on each participating node (do this on all nodes):
 
-    leader_cron:start_link(['node1@127.0.0.1', 'node2@127.0.0.1']).
+```erlang
+leader_cron:start_link(['node1@127.0.0.1', 'node2@127.0.0.1']).
+```
 
 Schedule tasks from any node. Here a cron style schedule is defined.
 
-    leader_cron:schedule_task({cron, {[{list, [5]}], all, all, all, all}},
-        {io, format, [user, "It is 5 past the hour", []]}).
+```erlang
+leader_cron:schedule_task({cron, {[{list, [5]}], all, all, all, all}},
+                          {io, format, [user, "It is 5 past the hour", []]}).
+```
 
 That's it. In this example the task prints, "It is 5 past the hour" on the
 leader node at 5 minutes past every hour.
 
-See the <code>leader_cron_task</code> module for full scheduling details (or
-<code>make doc</code>).
+See the `leader_cron_task` module for full scheduling details (or `make doc`).
