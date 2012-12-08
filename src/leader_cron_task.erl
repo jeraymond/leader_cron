@@ -488,6 +488,7 @@ oneshot_in_the_past_test() ->
     Schedule = {oneshot, DateTime},
     {ok, Pid} = leader_cron_task:start_link(Schedule, {timer, sleep, [500]}),
     {_, _, TaskPid} = leader_cron_task:status(Pid),
+    timer:sleep(500),
     ?assertMatch({error, _, _}, leader_cron_task:status(Pid)),
     ?assertEqual(false, is_process_alive(TaskPid)).
 
