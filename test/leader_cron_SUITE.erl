@@ -180,7 +180,8 @@ basic_fail_over(Config) ->
     Sched = {sleeper, 100},
     Mfa = {timer, sleep, [100]},
     {ok, TaskPid} = rpc:call(ANode, leader_cron, schedule_task, [Sched, Mfa]),
-    [{TaskPid, Sched, Mfa}] = rpc:call(ANode, leader_cron, task_list, []),
+    [{undefined, TaskPid, Sched, Mfa}] =
+	rpc:call(ANode, leader_cron, task_list, []),
 
     % ensure task is alive
     Leader = proplists:get_value(leader,
@@ -200,7 +201,7 @@ basic_fail_over(Config) ->
     true = Leader /= NewLeader,
 
     % verify tasks
-    [{TaskPid1, Sched, Mfa}] = rpc:call(BNode, leader_cron, task_list, []),
+    [{_Name, TaskPid1, Sched, Mfa}] = rpc:call(BNode, leader_cron, task_list, []),
     true = TaskPid /= TaskPid1,
 
     % verify task running again
