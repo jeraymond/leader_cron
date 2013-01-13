@@ -35,3 +35,34 @@ That's it. In this example the task prints, "It is 5 past the hour" on the
 leader node at 5 minutes past every hour.
 
 See the `leader_cron_task` module for full scheduling details (or `make doc`).
+
+## Building
+
+Run `make` or include as a [rebar](https://github.com/basho/rebar) dependency
+in your project.
+
+## Testing
+
+To run all tests run `make check`. This runs both the eunit tests as well as the
+common tests. These can also be run individually via `make eunit` and `make ct`.
+
+## Static Analysis
+
+
+### Dialyzer
+
+To perform the [Dialyzer](http://www.erlang.org/doc/man/dialyzer.html)
+static analysis of the code run `make dialyzer`. Run `make build_plt`
+once before performing the static analysis to build the plt file required
+by dialyzer.
+
+The file `dialyzer_reference` contains a set of expected dialyzer warnings
+that are ignored when running dialyzer.
+
+### Xref
+
+To run the [Xref](http://www.erlang.org/doc/apps/tools/xref_chapter.html)
+cross reference tool run `make xref`.
+
+The file `xref_reference` contains a set of expected xref warnings that are
+ignored when running xref.
