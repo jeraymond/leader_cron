@@ -71,7 +71,7 @@
 -define(SERVER, ?MODULE).
 
 %% The task pid() or name.
--type ident() :: {atom() | pid()}.
+-type ident() :: atom() | pid().
 
 -type task() :: {ident(),
                  leader_cron_task:schedule(),
