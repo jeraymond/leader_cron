@@ -24,13 +24,11 @@ ct: all
 	$(REBAR) ct skip_deps=true
 
 xref:  all
-	-@./rebar xref > xref_warnings
-	@diff -U0 xref_reference xref_warnings
+	$(REBAR) xref
 
 dialyzer:  all
-	-@dialyzer -q --plt $(PLT) -Wno_undefined_callbacks \
-		ebin > dialyzer_warnings
-	@diff -U0 dialyzer_reference dialyzer_warnings
+	dialyzer -q --plt $(PLT) -Wno_undefined_callbacks ebin
+
 
 build_plt: all
 	dialyzer --build_plt --output_plt $(PLT) \

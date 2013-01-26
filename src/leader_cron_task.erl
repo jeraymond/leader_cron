@@ -186,7 +186,14 @@ stop(Pid) ->
 
 init([{Schedule, Mfa}]) ->
     Self = self(),
-    Pid = spawn_link(fun() -> run_task(Schedule, Mfa, Self) end),
+    Pid = spawn_link(fun() ->
+			     case Schedule of
+				 {oneshot, _} ->
+				     oneshot(Schedule, Mfa, Self);
+				 _ ->
+				     run_task(Schedule, Mfa, Self)
+			     end
+		     end),
     {ok, #state{schedule = Schedule,
 		mfa = Mfa,
 		task_pid = Pid}}.
@@ -261,14 +268,14 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-run_task({oneshot, Millis}, Mfa, ParentPid) when is_integer(Millis) ->
+oneshot({oneshot, Millis}, Mfa, ParentPid) when is_integer(Millis) ->
     {M, F, A} = Mfa,
     gen_server:cast(ParentPid, {waiting, Millis}),
     timer:sleep(Millis),
     gen_server:cast(ParentPid, {running, Millis}),
     apply_task(M, F, A),
     gen_server:cast(ParentPid, {done, Millis});
-run_task({oneshot, DateTime}, Mfa, ParentPid) ->
+oneshot({oneshot, DateTime}, Mfa, ParentPid) ->
     {M, F, A} = Mfa,
     CurrentDateTime = calendar:universal_time(),
     CurrentSeconds = calendar:datetime_to_gregorian_seconds(CurrentDateTime),
@@ -286,7 +293,8 @@ run_task({oneshot, DateTime}, Mfa, ParentPid) ->
 	    Message = lists:flatten(io_lib:format(Format, [DateTime])),
 	    error_logger:error_report(Message),
 	    gen_server:cast(ParentPid, {error, Message})
-    end;
+    end.
+
 run_task({sleeper, Millis}, Mfa, ParentPid) ->
     {M, F, A} = Mfa,
     gen_server:cast(ParentPid, {running, Millis}),
