@@ -56,13 +56,7 @@ static analysis of the code run `make dialyzer`. Run `make build_plt`
 once before performing the static analysis to build the plt file required
 by dialyzer.
 
-The file `dialyzer_reference` contains a set of expected dialyzer warnings
-that are ignored when running dialyzer.
-
 ### Xref
 
 To run the [Xref](http://www.erlang.org/doc/apps/tools/xref_chapter.html)
 cross reference tool run `make xref`.
-
-The file `xref_reference` contains a set of expected xref warnings that are
-ignored when running xref.
