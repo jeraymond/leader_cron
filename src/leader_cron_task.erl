@@ -104,19 +104,40 @@
 -define(MINUTE_IN_SECONDS, 60).
 
 -type schedule() :: oneshot() | sleeper() | cron().
+%% A cron schedule.
+
 -type oneshot() :: {oneshot, Millis::pos_integer() | datetime()}.
+%% Schedule a task once after a delay or on a particular date.
+
 -type sleeper() :: {sleeper, Millis::pos_integer()}.
+%% Repeating schedule sleeping between executions.
+
 -type cron() :: {cron, {Minute :: cronspec(),
 			Hour :: cronspec(),
 			DayOfMonth :: cronspec(),
 			Month :: cronspec(),
 			DayOfWeek :: cronspec()}}.
+%% Unix like cron schedule representing the five cron fields:
+%% minute, hour, day of month, month, day of week.
+
 -type cronspec() :: all | [rangespec() | listspec()].
+%% Cron field value. Atom all for all values (e.g. *) or one of rangespec()
+%% or listspec().
+
 -type rangespec() :: {range, Min :: integer(), Max :: integer()}.
+%% Represents a cron range (e.g. 1-5).
+
 -type listspec() :: {list, Values :: [integer()]}.
+%% Represents a cron list (e.g. 1,3,7)
+
 -type status() :: waiting | running | done | error.
+%% Task execution status.
+
 -type mfargs() :: {Module :: atom(), Function :: atom(), Args :: [term()]}.
+%% Function execution definition.
+
 -type datetime() :: calendar:datetime().
+%% Date and time.
 
 %%%===================================================================
 %%% API
