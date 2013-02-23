@@ -70,12 +70,16 @@
 
 -define(SERVER, ?MODULE).
 
+-type name() :: atom() | binary().
+%% Name for a named task.
+
+-type ident() :: name() | pid().
 %% The task pid() or name.
--type ident() :: atom() | pid().
 
 -type task() :: {ident(),
                  leader_cron_task:schedule(),
                  leader_cron_task:mfargs()}.
+%% Task definition.
 
 -record(state, {tasks = [], is_leader = false}).
 
@@ -141,11 +145,13 @@ schedule_task(Schedule, Mfa) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec schedule_task(atom(), Schedule, Mfa) -> {ok, pid()} | {error, term()} when
+-spec schedule_task(ident(), Schedule, Mfa) ->
+			   {ok, pid()} | {error, term()} when
       Schedule :: leader_cron_task:schedule(),
       Mfa :: leader_cron_task:mfargs().
 
-schedule_task(Name, Schedule, Mfa) when is_atom(Name), Name /= undefined ->
+schedule_task(Name, Schedule, Mfa) when
+      is_binary(Name); is_atom(Name), Name /= undefined ->
     gen_leader:leader_call(?SERVER, {schedule, {Name, Schedule, Mfa}}).
 
 %%--------------------------------------------------------------------
@@ -238,7 +244,8 @@ surrendered(State, Sync, _Election) ->
     {ok, State3}.
 
 %% @private
-handle_leader_call({cancel, Name}, From, State, Election) when is_atom(Name) ->
+handle_leader_call({cancel, Name}, From, State, Election) when
+      is_binary(Name); is_atom(Name) ->
     case pid_for_name(Name, State#state.tasks) of
         {error, Reason} ->
             {reply, {error, Reason}, State};
@@ -274,8 +281,8 @@ handle_leader_call({schedule, {Name, Schedule, Mfa}}, _From, State, Election) ->
                     {reply, {error, Reason}, State}
             end
     end;
-handle_leader_call({task_status, Name}, From, State, Election)
-  when is_atom(Name) ->
+handle_leader_call({task_status, Name}, From, State, Election) when
+      is_binary(Name); is_atom(Name) ->
     case pid_for_name(Name, State#state.tasks) of
         {error, Reason} ->
             {reply, {error, Reason}, State};
@@ -444,7 +451,9 @@ all_test_() ->
       fun test_single_node_task/0,
       fun test_dying_task/0,
       fun test_done_task_removal/0,
-      fun test_single_named_task/0
+      fun test_single_named_task_with_atom_name/0,
+      fun test_single_named_task_with_atom_name_undefined/0,
+      fun test_single_named_task_with_binary_name/0
      ]}.
 
 test_single_node_task() ->
@@ -479,8 +488,16 @@ test_done_task_removal() ->
     ?assertEqual(ok, leader_cron:remove_done_tasks()),
     ?assertEqual([], leader_cron:task_list()).
 
-test_single_named_task() ->
-    Name = test_task,
+test_single_named_task_with_atom_name() ->
+    test_single_named_task(test_task).
+
+test_single_named_task_with_binary_name() ->
+    test_single_named_task(<<"test task">>).
+
+test_single_named_task_with_atom_name_undefined() ->
+    ?assertError(function_clause, leader_cron:schedule_task(undefined, ok, ok)).
+
+test_single_named_task(Name) ->
     Schedule = {sleeper, 100},
     Mfa = {leader_cron, simple_task, []},
     {ok, SchedulerPid} = leader_cron:schedule_task(Name, Schedule, Mfa),
@@ -488,7 +505,7 @@ test_single_named_task() ->
     {running, _, TaskPid} = leader_cron:task_status(Name),
     TaskPid ! go,
     ?assertMatch({waiting, _, TaskPid}, leader_cron:task_status(Name)),
-    ?assertEqual([{test_task, SchedulerPid, Schedule, Mfa}],
+    ?assertEqual([{Name, SchedulerPid, Schedule, Mfa}],
 		 leader_cron:task_list()),
     ?assertEqual(true, is_process_alive(TaskPid)),
     ?assertEqual(ok, leader_cron:cancel_task(Name)),
