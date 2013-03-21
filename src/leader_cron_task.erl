@@ -88,16 +88,16 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--export_type([sleeper/0, cron/0, mfargs/0, datetime/0, status/0, schedule/0]).
+-export_type([sleeper/0, cron/0, execargs/0, datetime/0, status/0, schedule/0]).
 
 -define(SERVER, ?MODULE).
 
--record(state, {schedule,
-		mfa,
-		task_pid,
-		status,
-		next
-	       }).
+-record(state, {
+        schedule :: schedule(),
+        exec :: execargs(),
+        task_pid :: pid(),
+        status :: status(),
+		next}).
 
 -define(DAY_IN_SECONDS, 86400).
 -define(HOUR_IN_SECONDS, 3600).
@@ -133,8 +133,14 @@
 -type status() :: waiting | running | done | error.
 %% Task execution status.
 
+-type execargs() :: mfargs() | funcargs().
+%% Task execution type.
+
 -type mfargs() :: {Module :: atom(), Function :: atom(), Args :: [term()]}.
 %% Function execution definition.
+
+-type funcargs() :: {Function :: fun(), Args :: [term()]}.
+%% Anonymous function execution definition.
 
 -type datetime() :: calendar:datetime().
 %% Date and time.
@@ -152,13 +158,13 @@
 %% @end
 %%--------------------------------------------------------------------
 
--spec start_link(Schedule, Mfa) -> {ok, pid()} | {error, Reason} when
+-spec start_link(Schedule, Exec) -> {ok, pid()} | {error, Reason} when
       Schedule :: schedule(),
-      Mfa :: mfargs(),
+      Exec :: execargs(),
       Reason :: term().
 
-start_link(Schedule, Mfa) ->
-    gen_server:start_link(?MODULE, [{Schedule, Mfa}], []).
+start_link(Schedule, Exec) ->
+    gen_server:start_link(?MODULE, [{Schedule, Exec}], []).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -203,20 +209,20 @@ stop(Pid) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec init([{schedule(), mfargs()}]) -> {ok, #state{}}.
+-spec init([{schedule(), execargs()}]) -> {ok, #state{}}.
 
-init([{Schedule, Mfa}]) ->
+init([{Schedule, Exec}]) ->
     Self = self(),
     Pid = spawn_link(fun() ->
 			     case Schedule of
 				 {oneshot, _} ->
-				     oneshot(Schedule, Mfa, Self);
+				     oneshot(Schedule, Exec, Self);
 				 _ ->
-				     run_task(Schedule, Mfa, Self)
+				     run_task(Schedule, Exec, Self)
 			     end
 		     end),
     {ok, #state{schedule = Schedule,
-		mfa = Mfa,
+		exec = Exec,
 		task_pid = Pid}}.
 
 %%--------------------------------------------------------------------
@@ -289,15 +295,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-oneshot({oneshot, Millis}, Mfa, ParentPid) when is_integer(Millis) ->
-    {M, F, A} = Mfa,
+oneshot({oneshot, Millis}, Exec, ParentPid) when is_integer(Millis) ->
     gen_server:cast(ParentPid, {waiting, Millis}),
     timer:sleep(Millis),
     gen_server:cast(ParentPid, {running, Millis}),
-    apply_task(M, F, A),
+    apply_task(Exec),
     gen_server:cast(ParentPid, {done, Millis});
-oneshot({oneshot, DateTime}, Mfa, ParentPid) ->
-    {M, F, A} = Mfa,
+oneshot({oneshot, DateTime}, Exec, ParentPid) ->
     CurrentDateTime = calendar:universal_time(),
     CurrentSeconds = calendar:datetime_to_gregorian_seconds(CurrentDateTime),
     ScheduleSeconds = calendar:datetime_to_gregorian_seconds(DateTime),
@@ -307,7 +311,7 @@ oneshot({oneshot, DateTime}, Mfa, ParentPid) ->
 	    gen_server:cast(ParentPid, {waiting, DateTime}),
 	    timer:sleep(WaitSeconds * 1000),
 	    gen_server:cast(ParentPid, {running, DateTime}),
-	    apply_task(M, F, A),
+	    apply_task(Exec),
 	    gen_server:cast(ParentPid, {done, DateTime});
 	false ->
 	    Format = "Schedule datetime ~p is in the past",
@@ -316,29 +320,32 @@ oneshot({oneshot, DateTime}, Mfa, ParentPid) ->
 	    gen_server:cast(ParentPid, {error, Message})
     end.
 
-run_task({sleeper, Millis}, Mfa, ParentPid) ->
-    {M, F, A} = Mfa,
+run_task({sleeper, Millis}, Exec, ParentPid) ->
     gen_server:cast(ParentPid, {running, Millis}),
-    apply_task(M, F, A),
+    apply_task(Exec),
     gen_server:cast(ParentPid, {waiting, Millis}),
     timer:sleep(Millis),
-    run_task({sleeper, Millis}, Mfa, ParentPid);
-run_task(Schedule, Mfa, ParentPid) ->
-    {M, F, A} = Mfa,
+    run_task({sleeper, Millis}, Exec, ParentPid);
+run_task(Schedule, Exec, ParentPid) ->
     CurrentDateTime = calendar:universal_time(),
     NextValidDateTime = next_valid_datetime(Schedule, CurrentDateTime),
     SleepFor = time_to_wait_millis(CurrentDateTime, NextValidDateTime),
     gen_server:cast(ParentPid, {waiting, NextValidDateTime}),
     timer:sleep(SleepFor),
     gen_server:cast(ParentPid, {running, NextValidDateTime}),
-    apply_task(M, F, A),
-    run_task(Schedule, Mfa, ParentPid).
+    apply_task(Exec),
+    run_task(Schedule, Exec, ParentPid).
 
--spec apply_task(atom(), atom(), [term()]) -> any().
+-spec apply_task(execargs()) -> any().
 
-apply_task(M, F, A) ->
+apply_task(Exec) ->
     try
-	apply(M, F, A)
+        case Exec of
+            {M, F, A} ->
+                apply(M, F, A);
+            {F, A} ->
+                apply(F, A)
+        end
     catch
 	Error:Reason ->
 	    Stacktrace = erlang:get_stacktrace(),
@@ -486,6 +493,19 @@ extract_integers(Spec, Min, Max, Acc) ->
 -compile(export_all).
 
 -include_lib("eunit/include/eunit.hrl").
+
+oneshot_anon_test() ->
+    Schedule = {oneshot, 500},
+    Fun = fun(T) -> timer:sleep(T) end,
+    {ok, Pid} = leader_cron_task:start_link(Schedule, {Fun, [500]}),
+    {_, _, TaskPid} = leader_cron_task:status(Pid),
+    ?assertMatch({waiting, 500, _}, leader_cron_task:status(Pid)),
+    timer:sleep(550),
+    ?assertMatch({running, 500, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(true, is_process_alive(TaskPid)),
+    timer:sleep(550),
+    ?assertMatch({done, 500, _}, leader_cron_task:status(Pid)),
+    ?assertEqual(false, is_process_alive(TaskPid)).
 
 oneshot_millis_test() ->
     Schedule = {oneshot, 500},
