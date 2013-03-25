@@ -34,6 +34,13 @@ leader_cron:schedule_task({cron, {[{list, [5]}], all, all, all, all}},
 That's it. In this example the task prints, "It is 5 past the hour" on the
 leader node at 5 minutes past every hour.
 
+You can also schedule anonymous functions:
+```erlang
+F = fun(Device, Format, Args) -> io:format(Device, Format, Args) end,
+leader_cron:schedule_task({cron, {[{list, [5]}], all, all, all, all}},
+                          {F, [user, "It is 5 past the hour", []]}).
+```
+
 See the `leader_cron_task` module for full scheduling details (or `make doc`).
 
 ## Building
