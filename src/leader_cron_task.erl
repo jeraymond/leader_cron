@@ -60,6 +60,10 @@
 %%% Field Spec                     Example            Unix Cron
 %%% -----------------------------  -----------------  ---------
 %%% all                            all                *
+%%% {integer(), integer{}}         {1, 5}             1-5
+%%% [integer()]                    [1, 3, 7]          1,3,7
+%%%
+%%% # old range and list format is also supported
 %%% {range, integer(), integer()}  {range, 1, 5}      1-5
 %%% {list, [integer()]}            {list, [1, 3, 7]}  1,3,7</pre>
 %%%
@@ -124,10 +128,11 @@
 %% Cron field value. Atom all for all values (e.g. *) or one of rangespec()
 %% or listspec().
 
--type rangespec() :: {range, Min :: integer(), Max :: integer()}.
+-type rangespec() :: {range, Min :: integer(), Max :: integer()}
+		   | {Min :: integer(), Max :: integer()}.
 %% Represents a cron range (e.g. 1-5).
 
--type listspec() :: {list, Values :: [integer()]}.
+-type listspec() :: {list, Values :: [integer()]} | [integer()] | integer().
 %% Represents a cron list (e.g. 1,3,7)
 
 -type status() :: waiting | running | done | error.
@@ -480,7 +485,13 @@ extract_integers(Spec, Min, Max, Acc) ->
 		 {range, Lower, Upper} when Lower < Upper ->
 		     lists:seq(Lower, Upper);
 		 {list, List} ->
-		     List
+		     List;
+		 {Lower, Upper} when Lower < Upper ->
+		     lists:seq(Lower, Upper);
+		 List when is_list(List) ->
+		     List;
+		 Integer when is_integer(Integer) ->
+		     [Integer]
 	     end,
     extract_integers(T, Min, Max, [Values|Acc]).
 
@@ -592,8 +603,11 @@ extract_integers_test() ->
     ?assertException(error, function_clause, extract_integers([], 5, 4)),
     ?assertException(error, {case_clause, bad}, extract_integers([bad], 0, 5)),
     ?assertEqual([1,2,3,4,5], extract_integers([{range, 1, 5}], 0, 10)),
+    ?assertEqual([1,2,3,4,5], extract_integers([{1, 5}], 0, 10)),
     ?assertEqual([1,2,3,4,5], extract_integers([{list, [1,2,3,4,5]}], 0, 10)),
-    ?assertEqual([5], extract_integers([{list, [5]}], 0, 10)).
+    ?assertEqual([1,2,3,4,5], extract_integers([[1,2,3,4,5]], 0, 10)),
+    ?assertEqual([5], extract_integers([{list, [5]}], 0, 10)),
+    ?assertEqual([5], extract_integers([5], 0, 10)).
 
 next_valid_datetime_cron_test() ->
     % roll year
