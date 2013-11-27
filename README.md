@@ -27,7 +27,7 @@ leader_cron:start_link(['node1@127.0.0.1', 'node2@127.0.0.1']).
 Schedule tasks from any node. Here a cron style schedule is defined.
 
 ```erlang
-leader_cron:schedule_task({cron, {[{list, [5]}], all, all, all, all}},
+leader_cron:schedule_task({cron, {[5], all, all, all, all}},
                           {io, format, [user, "It is 5 past the hour", []]}).
 ```
 
@@ -37,7 +37,7 @@ leader node at 5 minutes past every hour.
 You can also schedule anonymous functions:
 ```erlang
 F = fun(Device, Format, Args) -> io:format(Device, Format, Args) end,
-leader_cron:schedule_task({cron, {[{list, [5]}], all, all, all, all}},
+leader_cron:schedule_task({cron, {[5], all, all, all, all}},
                           {F, [user, "It is 5 past the hour", []]}).
 ```
 
