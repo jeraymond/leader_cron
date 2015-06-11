@@ -302,7 +302,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 oneshot({oneshot, Millis}, Exec, ParentPid) when is_integer(Millis) ->
     gen_server:cast(ParentPid, {waiting, Millis}),
-    timer:sleep(Millis),
+    sleep_accounting_for_max(Millis),
     gen_server:cast(ParentPid, {running, Millis}),
     apply_task(Exec),
     gen_server:cast(ParentPid, {done, Millis});
@@ -314,7 +314,7 @@ oneshot({oneshot, DateTime}, Exec, ParentPid) ->
     case WaitSeconds > 0 of
 	true ->
 	    gen_server:cast(ParentPid, {waiting, DateTime}),
-	    timer:sleep(WaitSeconds * 1000),
+            sleep_accounting_for_max(WaitSeconds * 1000),
 	    gen_server:cast(ParentPid, {running, DateTime}),
 	    apply_task(Exec),
 	    gen_server:cast(ParentPid, {done, DateTime});
@@ -329,14 +329,14 @@ run_task({sleeper, Millis}, Exec, ParentPid) ->
     gen_server:cast(ParentPid, {running, Millis}),
     apply_task(Exec),
     gen_server:cast(ParentPid, {waiting, Millis}),
-    timer:sleep(Millis),
+    sleep_accounting_for_max(Millis),
     run_task({sleeper, Millis}, Exec, ParentPid);
 run_task(Schedule, Exec, ParentPid) ->
     CurrentDateTime = calendar:universal_time(),
     NextValidDateTime = next_valid_datetime(Schedule, CurrentDateTime),
     SleepFor = time_to_wait_millis(CurrentDateTime, NextValidDateTime),
     gen_server:cast(ParentPid, {waiting, NextValidDateTime}),
-    timer:sleep(SleepFor),
+    sleep_accounting_for_max(SleepFor),
     gen_server:cast(ParentPid, {running, NextValidDateTime}),
     apply_task(Exec),
     run_task(Schedule, Exec, ParentPid).
@@ -494,6 +494,17 @@ extract_integers(Spec, Min, Max, Acc) ->
 		     [Integer]
 	     end,
     extract_integers(T, Min, Max, [Values|Acc]).
+
+sleep_accounting_for_max(TimeInMillis) ->
+       case (TimeInMillis > 100000000) of 
+	       true -> timer:sleep(TimeInMillis rem 100000000), long_sleep(TimeInMillis div 100000000);
+	       false -> timer:sleep(TimeInMillis)
+       end.
+
+long_sleep(0) -> ok;
+long_sleep(Chunks) -> 
+	timer:sleep(100000000),
+	long_sleep(Chunks - 1).
 
 %%%===================================================================
 %%% Unit Tests
