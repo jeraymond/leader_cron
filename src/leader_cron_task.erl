@@ -495,15 +495,17 @@ extract_integers(Spec, Min, Max, Acc) ->
 	     end,
     extract_integers(T, Min, Max, [Values|Acc]).
 
+-define(LONG_SLEEP_TIME, 100000000).
+
 sleep_accounting_for_max(TimeInMillis) ->
-       case (TimeInMillis > 100000000) of 
-	       true -> timer:sleep(TimeInMillis rem 100000000), long_sleep(TimeInMillis div 100000000);
+       case (TimeInMillis > ?LONG_SLEEP_TIME) of 
+	       true -> timer:sleep(TimeInMillis rem ?LONG_SLEEP_TIME), long_sleep(TimeInMillis div ?LONG_SLEEP_TIME);
 	       false -> timer:sleep(TimeInMillis)
        end.
 
 long_sleep(0) -> ok;
 long_sleep(Chunks) -> 
-	timer:sleep(100000000),
+	timer:sleep(?LONG_SLEEP_TIME),
 	long_sleep(Chunks - 1).
 
 %%%===================================================================
