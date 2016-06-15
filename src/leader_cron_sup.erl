@@ -29,7 +29,8 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/1]).
+-export([start_link/1,
+        start_link/2]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -53,6 +54,18 @@
 start_link(Nodes) ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, [Nodes]).
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Starts the leader_cron supervisor with the given node list and 
+%% gen_leader options. See {@link leader_cron:start_link/2}.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec start_link([node()], [term()]) -> ignore | {error, term()} | {ok, pid()}.
+
+start_link(Nodes, Opts) ->
+    supervisor:start_link({local, ?SERVER}, ?MODULE, [Nodes, Opts]).
+
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
@@ -67,6 +80,8 @@ start_link(Nodes) ->
 init([]) ->
     {error, no_node_list};
 init([Nodes]) ->
+    init([Nodes, []]);
+init([Nodes, Opts]) ->
     RestartStrategy = one_for_one,
     MaxRestarts = 2,
     MaxSecondsBetweenRestarts = 3600,
@@ -77,7 +92,7 @@ init([Nodes]) ->
     Shutdown = 2000,
     Type = worker,
 
-    LeaderCron = {leader_cron, {leader_cron, start_link, [Nodes]},
+    LeaderCron = {leader_cron, {leader_cron, start_link, [Nodes, Opts]},
 		  Restart, Shutdown, Type, [leader_cron]},
 
     {ok, {SupFlags, [LeaderCron]}}.

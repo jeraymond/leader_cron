@@ -45,6 +45,7 @@
 
 %% API
 -export([start_link/1,
+     start_link/2,
 	 status/0,
 	 schedule_task/2,
 	 schedule_task/3,
@@ -81,6 +82,17 @@
                  leader_cron_task:execargs()}.
 %% Task definition.
 
+%% The gen_leader options
+-type bcast_type() :: 'all' | 'sender'.
+
+-type option() :: {'workers',    Workers::[node()]}
+                | {'vardir',     Dir::string()}
+                | {'bcast_type', Type::bcast_type()}
+                | {'heartbeat',  Seconds::integer()}.
+
+-type options() :: [option()].
+
+
 -record(state, {tasks = [], is_leader = false}).
 
 %%%===================================================================
@@ -103,6 +115,24 @@
 
 start_link(Nodes) ->
     Opts = [],
+    start_link(Nodes, Opts).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Creates a linked process to manage scheduled tasks in coordination
+%% with the given nodes. The current node must be part of the node
+%% list. Each leader_cron node must be working with the same list of
+%% nodes to coordinate correctly.
+%% The Opts argument allows to configure gen_leader options.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec start_link(Nodes, Opts) -> {ok, pid()} | {error, Reason} when
+      Nodes :: [node()],
+      Opts :: [options()],
+      Reason :: term().
+
+start_link(Nodes, Opts) ->
     gen_leader:start_link(?SERVER, Nodes, Opts, ?MODULE, [], []).
 
 %%--------------------------------------------------------------------
